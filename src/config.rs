@@ -8,7 +8,7 @@ pub const DEFAULT_TRIM_TRAILING: &str = ".:";
 pub const DEFAULT_MIN_LENGTH: usize = 3;
 pub const DEFAULT_HEIGHT: usize = 10;
 /// The popup needs at least the filter row plus one list row.
-pub const MIN_HEIGHT: usize = 2;
+pub const MIN_HEIGHT: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -20,7 +20,7 @@ pub struct Config {
     pub min_length: usize,
     /// Only the last `max_lines` logical lines are scanned; `None` = all.
     pub max_lines: Option<usize>,
-    /// Total popup height in rows (filter row + list rows).
+    /// Maximum popup height in rows (one row per candidate).
     pub height: usize,
     /// Re-join soft-wrapped rows into logical lines.
     pub rejoin_wrapped: bool,
@@ -204,7 +204,7 @@ mod tests {
         let (c, w) = Config::from_map(&map(&[
             ("min_length", "-1"),
             ("max_lines", "lots"),
-            ("height", "1"),
+            ("height", "0"),
             ("rejoin_wrapped", "maybe"),
         ]));
         assert_eq!(w.len(), 4, "{w:?}");

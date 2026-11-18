@@ -7,6 +7,7 @@
 pub mod candidates;
 pub mod completion;
 pub mod config;
+pub mod keys;
 pub mod menu;
 pub mod placement;
 pub mod ranking;

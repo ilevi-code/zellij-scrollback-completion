@@ -64,25 +64,31 @@ Press `Alt ;` in a terminal pane. A borderless menu opens just below the
 cursor, or above it when there is no room below. It lists words from the
 pane's scrollback, most recent first.
 
-| Key                              | Action                               |
-|----------------------------------|--------------------------------------|
-| typing                           | filter (fuzzy; smart case)           |
-| `Backspace`                      | delete the last filter character     |
-| `Tab` / `Down` / `Ctrl-n`        | next candidate                       |
-| `Shift-Tab` / `Up` / `Ctrl-p`    | previous candidate                   |
-| `Enter`                          | insert the selected word, then close |
-| `Esc` / `Ctrl-c`                 | cancel                               |
+You keep typing in the shell while the menu is open: characters and
+`Backspace` go straight to your prompt and the menu re-filters on the word
+you're typing.
+
+| Key                              | Action                                         |
+|----------------------------------|------------------------------------------------|
+| characters, `Backspace`          | typed into the shell; the menu follows the word |
+| `Tab` / `Down` / `Ctrl-n`        | next candidate                                 |
+| `Shift-Tab` / `Up` / `Ctrl-p`    | previous candidate                             |
+| `Enter`                          | complete the word with the selection, close    |
+| `Esc`                            | close; your typed text stays                   |
+| a separator (space, `(`, ...), `Backspace` past the word start, `Enter` with no matches, any other key | close the menu, then the key goes to the shell |
 
 The filter starts as the partial word right before the cursor (text back to
-the last whitespace or separator), so `git chec` + `Alt ;` offers `checkout`.
-On `Enter` that partial word is completed: if the chosen word extends it, only
-the remainder is typed; otherwise the partial word is erased with backspaces
-and replaced. The partial word itself is never offered as a candidate.
+the last whitespace or separator), so `git chec` + `Alt ;` offers `checkout`,
+and the menu is anchored at the start of that word. On `Enter` the word is
+completed: if the chosen word extends what you typed, only the remainder is
+typed; otherwise your partial word is erased with backspaces and replaced.
+The partial word itself is never offered as a candidate. The word is inserted
+exactly as shown, with no trailing space and no quoting. If the scrollback
+has no candidates, the menu shows `no matches` and the next key closes it
+(and goes to the shell).
 
-The top row of the menu shows the filter. Nothing reaches the shell until you
-press `Enter`. The word is inserted exactly as shown, with no trailing space
-and no quoting. If the scrollback has no candidates, the menu shows
-`no matches` and any key closes it.
+Limitation: the menu holds Zellij focus (focusing the shell pane would hide
+the floating layer), so the shell's cursor isn't drawn while the menu is open.
 
 ## Configuration
 
@@ -95,7 +101,7 @@ strings.
 | `trim_trailing`  | `.:`            | Characters stripped from the end of each token. |
 | `min_length`     | `3`             | Drop tokens shorter than this. Counted in characters, after trimming. |
 | `max_lines`      | `unlimited`     | Scan only the last N logical lines. `0`, `none` and `unlimited` all mean no limit. |
-| `height`         | `10`            | Maximum popup height in rows, filter row included. Minimum `2`. The popup shrinks when there are fewer matches. |
+| `height`         | `10`            | Maximum popup height in rows (one per candidate). Minimum `1`. The popup shrinks when there are fewer matches. |
 | `rejoin_wrapped` | `true`          | Re-join soft-wrapped rows. A row that fills the pane's full width continues onto the next row. |
 
 Zellij treats different configurations as different plugin instances. If you
@@ -124,7 +130,8 @@ Layout:
   orders by recency and dedups.
 * `src/ranking.rs`: fuzzy ranking (`nucleo-matcher`), ties broken by recency.
 * `src/completion.rs`: the partial word before the cursor and the keystrokes that replace it.
-* `src/menu.rs`: the menu state machine (filter, selection, scrolling, keys).
+* `src/keys.rs`: key presses and their terminal byte encoding (for forwarding).
+* `src/menu.rs`: the menu state machine (filter, selection, scrolling, which keys are consumed vs. forwarded).
 * `src/placement.rs`: popup placement below or above the cursor, clamped to
   the screen.
 * `src/render.rs`: ANSI rendering and the popup's desired size.

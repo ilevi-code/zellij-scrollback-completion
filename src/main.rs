@@ -8,10 +8,12 @@
 
 use std::collections::BTreeMap;
 
+use unicode_width::UnicodeWidthStr;
 use zellij_scrollback_completion::{
     candidates, completion,
     config::Config,
-    menu::{Key, Menu, Outcome},
+    keys::{Bare, KeyPress},
+    menu::{Menu, Outcome},
     placement::{self, Rect},
     render, scrollback,
 };
@@ -32,10 +34,9 @@ struct State {
 /// One open popup.
 struct Session {
     origin: PaneId,
-    /// The partial word before the cursor, already typed in the origin pane.
-    prefix: String,
-    /// Absolute screen coordinates of the origin cursor.
-    cursor: (usize, usize),
+    /// Absolute screen coordinates where the menu is anchored: the start of
+    /// the word being completed, on the cursor row.
+    anchor: (usize, usize),
     /// The area the popup may occupy.
     bounds: Rect,
     menu: Menu,
@@ -168,36 +169,56 @@ impl State {
             .map(|(line, col)| completion::word_before_cursor(line, col, &self.config))
             .unwrap_or_default();
         let cursor = cursor_position(info.as_ref(), &contents);
+        let anchor = (cursor.0.saturating_sub(prefix.width()), cursor.1);
         let bounds = self.screen_bounds(tab, info.as_ref());
         self.session = Some(Session {
             origin,
-            cursor,
+            anchor,
             bounds,
             menu: Menu::with_prefix(words, self.config.height, &prefix),
-            prefix,
             rect: None,
         });
         show_self(true);
         self.reposition();
     }
 
-    fn handle_key(&mut self, key: Key) -> bool {
+    /// The menu keeps focus (focusing a tiled pane would hide the floating
+    /// layer), so keys the menu doesn't consume are forwarded to the origin
+    /// pane: typing continues in the shell while the menu follows along.
+    fn handle_key(&mut self, key: KeyPress) -> bool {
         let Some(session) = self.session.as_mut() else {
             return false;
         };
-        match session.menu.handle_key(key) {
+        let config = &self.config;
+        let outcome = session.menu.handle_key(&key, |c| config.is_separator(c));
+        let origin = session.origin;
+        let forward = || match key.encode() {
+            Some(bytes) => write_to_pane_id(bytes, origin),
+            None => eprintln!("zellij-scrollback-completion: cannot forward {key:?}"),
+        };
+        match outcome {
             Outcome::Redraw => {
+                self.reposition();
+                true
+            }
+            Outcome::ForwardAndRedraw => {
+                forward();
                 self.reposition();
                 true
             }
             Outcome::Ignore => false,
             Outcome::Insert(word) => {
-                let text = completion::replacement(&session.prefix, &word);
-                write_chars_to_pane_id(&text, session.origin);
+                let text = completion::replacement(session.menu.filter(), &word);
+                write_chars_to_pane_id(&text, origin);
                 self.close();
                 false
             }
             Outcome::Close => {
+                self.close();
+                false
+            }
+            Outcome::CloseAndForward => {
+                forward();
                 self.close();
                 false
             }
@@ -221,10 +242,8 @@ impl State {
             return;
         };
         let (width, height) = render::desired_size(&session.menu);
-        let rect = placement::place(session.cursor, session.bounds, width, height);
-        session
-            .menu
-            .set_available_list_rows(rect.height.saturating_sub(1));
+        let rect = placement::place(session.anchor, session.bounds, width, height);
+        session.menu.set_available_list_rows(rect.height);
         if session.rect == Some(rect) {
             return;
         }
@@ -352,25 +371,31 @@ fn cursor_position(info: Option<&PaneInfo>, contents: &PaneContents) -> (usize, 
     }
 }
 
-fn map_key(key: &KeyWithModifier) -> Key {
+fn map_key(key: &KeyWithModifier) -> KeyPress {
     let mods = &key.key_modifiers;
-    let none = mods.is_empty();
-    let only = |m: KeyModifier| mods.len() == 1 && mods.contains(&m);
-    match key.bare_key {
-        BareKey::Tab if none => Key::Next,
-        BareKey::Tab if only(KeyModifier::Shift) => Key::Prev,
-        BareKey::Down if none => Key::Next,
-        BareKey::Up if none => Key::Prev,
-        BareKey::Enter if none => Key::Accept,
-        BareKey::Esc if none => Key::Cancel,
-        BareKey::Backspace if none => Key::Backspace,
-        BareKey::Char('n') if only(KeyModifier::Ctrl) => Key::Next,
-        BareKey::Char('p') if only(KeyModifier::Ctrl) => Key::Prev,
-        BareKey::Char('c') if only(KeyModifier::Ctrl) => Key::Cancel,
-        BareKey::Char(c) if none => Key::Char(c),
-        BareKey::Char(c) if only(KeyModifier::Shift) => {
-            Key::Char(c.to_uppercase().next().unwrap_or(c))
-        }
-        _ => Key::Other,
+    let bare = match key.bare_key {
+        BareKey::Char(c) => Bare::Char(c),
+        BareKey::Enter => Bare::Enter,
+        BareKey::Tab => Bare::Tab,
+        BareKey::Backspace => Bare::Backspace,
+        BareKey::Esc => Bare::Esc,
+        BareKey::Up => Bare::Up,
+        BareKey::Down => Bare::Down,
+        BareKey::Left => Bare::Left,
+        BareKey::Right => Bare::Right,
+        BareKey::Home => Bare::Home,
+        BareKey::End => Bare::End,
+        BareKey::Delete => Bare::Delete,
+        BareKey::Insert => Bare::Insert,
+        BareKey::PageUp => Bare::PageUp,
+        BareKey::PageDown => Bare::PageDown,
+        BareKey::F(n) => Bare::F(n),
+        _ => Bare::Unknown,
+    };
+    KeyPress {
+        bare,
+        ctrl: mods.contains(&KeyModifier::Ctrl),
+        alt: mods.contains(&KeyModifier::Alt),
+        shift: mods.contains(&KeyModifier::Shift),
     }
 }

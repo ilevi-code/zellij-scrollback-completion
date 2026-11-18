@@ -39,22 +39,28 @@ Target: Zellij **0.46.0**, Rust, `zellij-tile` 0.46, compiled to `wasm32-wasip1`
 ## Popup UI
 
 - About `height` rows (default `10`), as wide as the longest visible
-  candidate (plus the filter row width), capped to the screen.
+  candidate, capped to the screen.
 - No border / title / counter if Zellij allows; otherwise the thinnest frame
   possible. Selected row highlighted; fuzzy-matched characters highlighted.
-- Top row shows the filter text (option (a): nothing is sent to the shell
-  until Enter).
+- **Typing continues in the shell** (vim-style): printable non-separator
+  characters and `Backspace` are forwarded to the origin pane and the menu
+  re-filters on the word being typed. There is no filter row. The menu is
+  anchored at the start of the word. No live preview of the selection.
 - Keys:
   - `Tab` / `Down` / `Ctrl-n`: next
   - `Shift-Tab` / `Up` / `Ctrl-p`: previous
-  - `Enter`: insert selection into origin pane, then hide
-  - `Esc` / `Ctrl-c`: cancel, then hide
-  - `Backspace`: edit filter
-  - Other printable chars: append to filter
+  - `Enter`: complete the word with the selection, then hide
+  - `Esc`: close without forwarding
+  - Separator, `Backspace` past the word start, `Enter` with no matches, any
+    other key: close, then forward the key to the shell
 - Empty states:
-  - Filter matches nothing: show a dim `no matches` row; popup stays open.
-  - Scrollback has no candidates at all: open the popup showing `no matches`;
-    any key closes it.
+  - Word matches nothing: show a dim `no matches` row; menu stays open.
+  - Scrollback has no candidates at all: show `no matches`; the next key
+    closes the menu (and is forwarded, except `Esc`).
+- The menu keeps Zellij focus (focusing a tiled pane hides the floating
+  layer), so the shell cursor isn't drawn while it's open. Future: Zellij
+  0.46's unfocused plugin popups (`open_plugin_popup_with_options`) could
+  avoid this.
 
 ## Lifecycle
 
