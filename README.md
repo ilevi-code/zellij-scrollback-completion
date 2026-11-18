@@ -1,10 +1,14 @@
 # zellij-scrollback-completion
 
-A Zellij (0.46) plugin that pops up a vim-style completion menu of words
-taken from the focused pane's scrollback. The word you pick is typed into
-that pane at the cursor.
+A [Zellij](https://zellij.dev) plugin that completes the word you're typing
+from the **scrollback of the current pane**, with a small vim-style completion
+menu.
 
-See [ROADMAP.md](ROADMAP.md) for the design.
+Type part of a word that appeared earlier in the pane (a path, a branch name,
+a hash, a hostname), press `Alt ;`, pick a candidate, and press `Enter`. The
+word is completed in place.
+
+Requires Zellij **0.46** or later. See [ROADMAP.md](ROADMAP.md) for the design.
 
 ## Install
 
@@ -23,8 +27,9 @@ See [ROADMAP.md](ROADMAP.md) for the design.
 
    Output: `target/wasm32-wasip1/release/zellij-scrollback-completion.wasm`
 
-3. Add the keybind. Put the `bind` line inside the existing
-   `shared_except "locked" { ... }` block of `keybinds` in your `config.kdl`:
+3. Add a keybind. Put the `bind` block inside the existing
+   `shared_except "locked" { ... }` block of `keybinds` in your `config.kdl`,
+   and adjust the path to where you built the plugin:
 
    ```kdl
    keybinds {
@@ -45,95 +50,146 @@ See [ROADMAP.md](ROADMAP.md) for the design.
    }
    ```
 
-   `floating true` matters only on the first press, when Zellij loads the
-   plugin. Without it, Zellij opens the plugin as a tiled pane.
-
 4. Restart Zellij, or start a new session, so it picks up the keybind.
 
 5. On the first press of `Alt ;`, Zellij opens the plugin and asks for
-   permissions. Focus the plugin pane, for example by clicking it, and press
-   `y`. The plugin then hides itself. Press `Alt ;` again to use it. Zellij
-   remembers the permissions, so it only asks once.
+   permissions. Focus the plugin pane (for example by clicking it) and press
+   `y`. The plugin then hides itself; press `Alt ;` again to use it. Zellij
+   remembers the grant, so it asks only once.
 
-After rebuilding the wasm, reload the plugin. Restarting the session is the
-simplest way. Zellij caches loaded plugins by URL and configuration.
+After rebuilding the wasm, restart the Zellij session: Zellij keeps the
+already-loaded plugin until then.
 
 ## Usage
 
-Press `Alt ;` in a terminal pane. A borderless menu opens just below the
-cursor, or above it when there is no room below. It lists words from the
-pane's scrollback, most recent first.
+Press `Alt ;` in a terminal pane. A borderless menu opens under the word
+you're typing (or above it when there's no room below), listing words from
+the pane's scrollback.
 
-You keep typing in the shell while the menu is open: characters and
-`Backspace` go straight to your prompt and the menu re-filters on the word
-you're typing.
+* **The current word is the filter.** The text before the cursor, back to the
+  last whitespace or separator, pre-fills the filter, so `git chec` + `Alt ;`
+  offers `checkout`. The partial word itself is never offered.
+* **Keep typing.** Characters and `Backspace` go straight to your shell prompt,
+  and the menu re-filters as the word changes.
+* **Ranking.** Fuzzy matching (smart case) orders the candidates; equally
+  good matches are ordered most recent first (closest to the bottom of the
+  scrollback). Duplicates are removed.
+* **Completion.** `Enter` completes the word. If the chosen candidate starts
+  with what you typed, only the rest is typed; otherwise your partial word is
+  erased with backspaces and replaced. The word is inserted exactly as shown,
+  with no trailing space and no quoting.
 
-| Key                              | Action                                         |
-|----------------------------------|------------------------------------------------|
-| characters, `Backspace`          | typed into the shell; the menu follows the word |
-| `Tab` / `Down` / `Ctrl-n`        | next candidate                                 |
-| `Shift-Tab` / `Up` / `Ctrl-p`    | previous candidate                             |
-| `Enter`                          | complete the word with the selection, close    |
-| `Esc`                            | close; your typed text stays                   |
-| a separator (space, `(`, ...), `Backspace` past the word start, `Enter` with no matches, any other key | close the menu, then the key goes to the shell |
+| Key                                         | Action                                           |
+|---------------------------------------------|--------------------------------------------------|
+| characters, `Backspace`                     | typed into the shell; the menu follows the word  |
+| `Tab` / `Down` / `Ctrl-n`                   | next candidate                                   |
+| `Shift-Tab` / `Up` / `Ctrl-p`               | previous candidate                               |
+| `Enter`                                     | complete the word with the selection and close   |
+| `Esc`                                       | close; what you typed stays                      |
+| separator (space, `(`, ...), `Backspace` past the start of the word, `Enter` with no matches, any other key | close the menu, then the key goes to the shell |
 
-The filter starts as the partial word right before the cursor (text back to
-the last whitespace or separator), so `git chec` + `Alt ;` offers `checkout`,
-and the menu is anchored at the start of that word. On `Enter` the word is
-completed: if the chosen word extends what you typed, only the remainder is
-typed; otherwise your partial word is erased with backspaces and replaced.
-The partial word itself is never offered as a candidate. The word is inserted
-exactly as shown, with no trailing space and no quoting. If the scrollback
-has no candidates, the menu shows `no matches` and the next key closes it
-(and goes to the shell).
+If nothing matches, the menu shows a dim `no matches` row and stays open so
+you can keep typing or backspace. If the scrollback has no candidates at all,
+it shows `no matches` and the next key closes it.
 
-Limitation: the menu holds Zellij focus (focusing the shell pane would hide
-the floating layer), so the shell's cursor isn't drawn while the menu is open.
+**Limitation:** the menu holds Zellij's focus while it's open (giving focus
+back to the shell pane would hide the floating menu), so the shell's cursor
+isn't drawn until the menu closes.
 
-## Configuration
+## Options
 
-Set these as key/value pairs inside the `MessagePlugin` block. All values are
-strings.
+Options go inside the `MessagePlugin { ... }` block of the keybind, one per
+line, as `name "value"`. Values are always quoted strings, even numbers and
+booleans. Unknown options are ignored. An invalid value falls back to the
+default and a warning is written to the Zellij log.
 
-| key              | default         | meaning |
-|------------------|-----------------|---------|
-| `separators`     | `()[]{}<>"',;`  | Extra characters that split tokens. Each character in the string is one separator. Whitespace always splits. |
-| `trim_trailing`  | `.:`            | Characters stripped from the end of each token. |
-| `min_length`     | `3`             | Drop tokens shorter than this. Counted in characters, after trimming. |
-| `max_lines`      | `unlimited`     | Scan only the last N logical lines. `0`, `none` and `unlimited` all mean no limit. |
-| `height`         | `10`            | Maximum popup height in rows (one per candidate). Minimum `1`. The popup shrinks when there are fewer matches. |
-| `rejoin_wrapped` | `true`          | Re-join soft-wrapped rows. A row that fills the pane's full width continues onto the next row. |
+| Option           | Default         | Accepted values |
+|------------------|-----------------|-----------------|
+| `separators`     | `()[]{}<>"',;`  | any characters  |
+| `trim_trailing`  | `.:`            | any characters  |
+| `min_length`     | `3`             | integer ≥ 0     |
+| `max_lines`      | `unlimited`     | integer; `0`, `none`, `unlimited` or empty for no limit |
+| `height`         | `10`            | integer ≥ 1     |
+| `rejoin_wrapped` | `true`          | `true`/`false`, `yes`/`no`, `on`/`off`, `1`/`0` |
 
-Zellij treats different configurations as different plugin instances. If you
-change a value, Zellij loads a new instance and may ask for permissions again.
+### `separators`
+
+Characters that split the scrollback into words, **in addition to
+whitespace** (which always splits). Each character in the string is one
+separator; order doesn't matter. The same set also decides where the
+current word starts, and typing a separator while the menu is open closes it.
+
+To use a `"` in the value, escape it as `\"` (KDL string syntax). Examples:
+
+* `separators "()[]{}<>\"',;"`: the default.
+* `separators "()[]{}<>\"',;=:"`: also split `key=value` and `host:port`.
+* `separators ""`: split on whitespace only.
+
+### `trim_trailing`
+
+Characters stripped from the **end** of each word, so `see foo.txt.` yields
+`foo.txt` and `error:` yields `error`. Every trailing run of these characters
+is removed. Use `trim_trailing ""` to keep words as they are.
+
+### `min_length`
+
+Words shorter than this, counted in characters after trimming, are dropped.
+`min_length "1"` keeps every word. `0` behaves like `1`.
+
+### `max_lines`
+
+Scan only the last N lines of the scrollback (after wrapped rows are
+re-joined). The default scans the whole scrollback, which is bounded by
+Zellij's `scroll_buffer_size` (10000 lines by default). Lower it if opening
+the menu feels slow on very large scrollbacks.
+
+### `height`
+
+Maximum number of candidate rows shown at once. The menu shrinks when there
+are fewer matches, and further if the screen doesn't have room. The list
+scrolls to keep the selection visible.
+
+### `rejoin_wrapped`
+
+Zellij reports the scrollback as screen rows, so a long line (a URL, a long
+path) that wraps is split across rows. With this on, a row that fills the
+pane's full width is joined with the next one, so the long word is offered
+whole. Turn it off if you see words glued together from lines that happened
+to end exactly at the pane edge.
+
+### Changing options
+
+Zellij treats a different set of options as a different plugin instance.
+After changing them, restart the session; the new instance may ask for
+permissions again.
 
 ## Permissions
 
-* `ReadPaneContents`: read the scrollback.
-* `WriteToStdin`: type the chosen word into the origin pane.
+* `ReadPaneContents`: read the pane's scrollback.
+* `WriteToStdin`: type into the pane (forwarded keys and the completion).
 * `ReadApplicationState`: find the focused pane, its cursor and geometry.
-* `ChangeApplicationState`: position the popup and return focus.
+* `ChangeApplicationState`: show, position and hide the menu, and return focus.
 
 ## Development
 
 ```sh
 make test    # cargo test: unit tests for all pure logic (host target)
 make check   # cargo fmt --check + cargo clippy -D warnings (host target)
+make build   # release wasm
 ```
 
 Layout:
 
-* `src/config.rs`: parses the plugin configuration.
-* `src/scrollback.rs`: orders the rows, re-joins wrapped rows, applies the
-  `max_lines` cap.
-* `src/candidates.rs`: tokenizes, trims, applies the minimum length,
-  orders by recency and dedups.
+* `src/config.rs`: parses the options.
+* `src/scrollback.rs`: orders the rows, re-joins wrapped rows, applies `max_lines`.
+* `src/candidates.rs`: splits into words, trims, applies `min_length`, orders by recency, removes duplicates.
 * `src/ranking.rs`: fuzzy ranking (`nucleo-matcher`), ties broken by recency.
-* `src/completion.rs`: the partial word before the cursor and the keystrokes that replace it.
-* `src/keys.rs`: key presses and their terminal byte encoding (for forwarding).
-* `src/menu.rs`: the menu state machine (filter, selection, scrolling, which keys are consumed vs. forwarded).
-* `src/placement.rs`: popup placement below or above the cursor, clamped to
-  the screen.
-* `src/render.rs`: ANSI rendering and the popup's desired size.
-* `src/main.rs`: the Zellij glue (events, permissions, pane I/O). It is only
-  registered as a plugin when built for wasm.
+* `src/completion.rs`: the partial word before the cursor, and the keystrokes that replace it.
+* `src/keys.rs`: key presses and their terminal byte encoding, for forwarding.
+* `src/menu.rs`: the menu state machine (filter, selection, scrolling, which keys are consumed or forwarded).
+* `src/placement.rs`: menu placement below or above the word, clamped to the screen.
+* `src/render.rs`: ANSI rendering and the menu's size.
+* `src/main.rs`: the Zellij glue (events, permissions, pane I/O). It is registered as a plugin only when built for wasm.
+
+`tests/readme_keybind.rs` parses the first `kdl` block of this README with
+Zellij's own config parser, so keep the keybind snippet first.

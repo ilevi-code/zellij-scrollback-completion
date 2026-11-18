@@ -7,7 +7,7 @@ pub const DEFAULT_SEPARATORS: &str = "()[]{}<>\"',;";
 pub const DEFAULT_TRIM_TRAILING: &str = ".:";
 pub const DEFAULT_MIN_LENGTH: usize = 3;
 pub const DEFAULT_HEIGHT: usize = 10;
-/// The popup needs at least the filter row plus one list row.
+/// The popup needs at least one row.
 pub const MIN_HEIGHT: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
