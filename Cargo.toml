@@ -1,0 +1,31 @@
+[package]
+name = "zellij-scrollback-completion"
+version = "0.1.0"
+edition = "2021"
+description = "Zellij plugin: vim-style completion menu of words from the focused pane's scrollback"
+license = "MIT"
+
+[lib]
+name = "zellij_scrollback_completion"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zellij-scrollback-completion"
+path = "src/main.rs"
+# The binary is the Zellij glue; it only links against the Zellij host on wasm.
+test = false
+
+[dependencies]
+zellij-tile = "0.46.0"
+nucleo-matcher = "0.3"
+unicode-width = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1
+
+[dev-dependencies]
+# Used only to check that the README's keybind snippet parses with Zellij's own config parser.
+zellij-utils = "0.46.0"

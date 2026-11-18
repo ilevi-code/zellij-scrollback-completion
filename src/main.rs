@@ -1,0 +1,376 @@
+//! Zellij glue: events, permissions, pane I/O, positioning and rendering.
+//!
+//! All decisions are delegated to the pure modules in the library crate; this
+//! file only talks to Zellij. On non-wasm targets the plugin entry points are
+//! not registered (there is no Zellij host to link against), but the code is
+//! still type-checked so `cargo check`/`clippy` cover it.
+#![cfg_attr(not(target_family = "wasm"), allow(dead_code))]
+
+use std::collections::BTreeMap;
+
+use zellij_scrollback_completion::{
+    candidates, completion,
+    config::Config,
+    menu::{Key, Menu, Outcome},
+    placement::{self, Rect},
+    render, scrollback,
+};
+use zellij_tile::prelude::*;
+
+#[derive(Default)]
+struct State {
+    config: Config,
+    permissions_granted: bool,
+    /// A trigger arrived before permissions were granted.
+    pending_trigger: bool,
+    own_plugin_id: Option<u32>,
+    tabs: Vec<TabInfo>,
+    manifest: Option<PaneManifest>,
+    session: Option<Session>,
+}
+
+/// One open popup.
+struct Session {
+    origin: PaneId,
+    /// The partial word before the cursor, already typed in the origin pane.
+    prefix: String,
+    /// Absolute screen coordinates of the origin cursor.
+    cursor: (usize, usize),
+    /// The area the popup may occupy.
+    bounds: Rect,
+    menu: Menu,
+    /// Last geometry sent to Zellij.
+    rect: Option<Rect>,
+}
+
+#[cfg(target_family = "wasm")]
+register_plugin!(State);
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    eprintln!("zellij-scrollback-completion is a Zellij plugin; build it for wasm32-wasip1.");
+}
+
+impl ZellijPlugin for State {
+    fn load(&mut self, configuration: BTreeMap<String, String>) {
+        let (config, warnings) = Config::from_map(&configuration);
+        for warning in warnings {
+            eprintln!("zellij-scrollback-completion: {warning}");
+        }
+        self.config = config;
+        self.own_plugin_id = Some(get_plugin_ids().plugin_id);
+        request_permission(&[
+            PermissionType::ReadPaneContents,
+            PermissionType::WriteToStdin,
+            PermissionType::ReadApplicationState,
+            PermissionType::ChangeApplicationState,
+        ]);
+        subscribe(&[
+            EventType::Key,
+            EventType::PermissionRequestResult,
+            EventType::PaneUpdate,
+            EventType::TabUpdate,
+        ]);
+    }
+
+    fn pipe(&mut self, pipe_message: PipeMessage) -> bool {
+        if pipe_message.source != PipeSource::Keybind {
+            return false;
+        }
+        if !self.permissions_granted {
+            // Calling permission-gated commands now would get no reply.
+            self.pending_trigger = true;
+            return false;
+        }
+        self.trigger();
+        true
+    }
+
+    fn update(&mut self, event: Event) -> bool {
+        match event {
+            Event::PermissionRequestResult(PermissionStatus::Granted) => {
+                self.permissions_granted = true;
+                if std::mem::take(&mut self.pending_trigger) {
+                    self.trigger();
+                } else if self.session.is_none() {
+                    hide_self();
+                }
+                true
+            }
+            Event::PermissionRequestResult(PermissionStatus::Denied) => {
+                eprintln!(
+                    "zellij-scrollback-completion: permissions denied; the plugin cannot work"
+                );
+                hide_self();
+                false
+            }
+            Event::TabUpdate(tabs) => {
+                self.tabs = tabs;
+                false
+            }
+            Event::PaneUpdate(manifest) => {
+                self.manifest = Some(manifest);
+                false
+            }
+            Event::Key(key) => self.handle_key(map_key(&key)),
+            _ => false,
+        }
+    }
+
+    fn render(&mut self, rows: usize, cols: usize) {
+        match &self.session {
+            Some(session) => {
+                print!(
+                    "{}",
+                    render::render_lines(&session.menu, rows, cols).join("\n")
+                );
+            }
+            None if !self.permissions_granted => {
+                print!("scrollback-completion: grant permissions, then press the keybind again");
+            }
+            None => {}
+        }
+    }
+}
+
+impl State {
+    fn own_pane_id(&self) -> Option<PaneId> {
+        self.own_plugin_id.map(PaneId::Plugin)
+    }
+
+    /// Records the origin pane, harvests its scrollback and shows the popup.
+    fn trigger(&mut self) {
+        let Some((tab, origin)) = self.focused_pane() else {
+            eprintln!("zellij-scrollback-completion: could not determine the focused pane");
+            return;
+        };
+        if Some(origin) == self.own_pane_id() {
+            // We are focused ourselves (e.g. the user just answered the
+            // permission prompt); there is no origin pane to complete into.
+            self.close();
+            return;
+        }
+        let info = get_pane_info(origin).or_else(|| self.pane_info_from_manifest(origin));
+        let contents = get_pane_scrollback(origin, true).unwrap_or_else(|e| {
+            eprintln!("zellij-scrollback-completion: failed to read scrollback: {e}");
+            PaneContents::default()
+        });
+
+        let content_columns = info.as_ref().map_or(0, |i| i.pane_content_columns);
+        let rows = scrollback::ordered_rows(
+            &contents.lines_above_viewport,
+            &contents.viewport,
+            &contents.lines_below_viewport,
+        );
+        let words = candidates::from_rows(rows, content_columns, &self.config);
+
+        let prefix = cursor_line(info.as_ref(), &contents)
+            .map(|(line, col)| completion::word_before_cursor(line, col, &self.config))
+            .unwrap_or_default();
+        let cursor = cursor_position(info.as_ref(), &contents);
+        let bounds = self.screen_bounds(tab, info.as_ref());
+        self.session = Some(Session {
+            origin,
+            cursor,
+            bounds,
+            menu: Menu::with_prefix(words, self.config.height, &prefix),
+            prefix,
+            rect: None,
+        });
+        show_self(true);
+        self.reposition();
+    }
+
+    fn handle_key(&mut self, key: Key) -> bool {
+        let Some(session) = self.session.as_mut() else {
+            return false;
+        };
+        match session.menu.handle_key(key) {
+            Outcome::Redraw => {
+                self.reposition();
+                true
+            }
+            Outcome::Ignore => false,
+            Outcome::Insert(word) => {
+                let text = completion::replacement(&session.prefix, &word);
+                write_chars_to_pane_id(&text, session.origin);
+                self.close();
+                false
+            }
+            Outcome::Close => {
+                self.close();
+                false
+            }
+        }
+    }
+
+    /// Hides the popup and returns focus to the origin pane.
+    fn close(&mut self) {
+        hide_self();
+        if let Some(session) = self.session.take() {
+            focus_pane_with_id(session.origin, false, false);
+        }
+    }
+
+    /// Resizes/moves the popup to fit the current menu, if that changed.
+    fn reposition(&mut self) {
+        let Some(own) = self.own_pane_id() else {
+            return;
+        };
+        let Some(session) = self.session.as_mut() else {
+            return;
+        };
+        let (width, height) = render::desired_size(&session.menu);
+        let rect = placement::place(session.cursor, session.bounds, width, height);
+        session
+            .menu
+            .set_available_list_rows(rect.height.saturating_sub(1));
+        if session.rect == Some(rect) {
+            return;
+        }
+        session.rect = Some(rect);
+        let coordinates = FloatingPaneCoordinates::new(
+            Some(rect.x.to_string()),
+            Some(rect.y.to_string()),
+            Some(rect.width.to_string()),
+            Some(rect.height.to_string()),
+            None,
+            Some(true), // borderless: no frame, title or counter
+        );
+        if let Some(coordinates) = coordinates {
+            change_floating_panes_coordinates(vec![(own, coordinates)]);
+        }
+    }
+
+    /// The focused pane (and its tab), preferring the host query and falling
+    /// back to the last PaneUpdate/TabUpdate.
+    fn focused_pane(&self) -> Option<(Option<usize>, PaneId)> {
+        match get_focused_pane_info() {
+            Ok((tab, pane)) => Some((Some(tab), pane)),
+            Err(e) => {
+                eprintln!("zellij-scrollback-completion: get_focused_pane_info failed: {e}");
+                self.focused_pane_from_manifest()
+            }
+        }
+    }
+
+    fn active_tab(&self) -> Option<&TabInfo> {
+        self.tabs.iter().find(|t| t.active)
+    }
+
+    fn focused_pane_from_manifest(&self) -> Option<(Option<usize>, PaneId)> {
+        let tab = self.active_tab()?;
+        let panes = self.manifest.as_ref()?.panes.get(&tab.position)?;
+        let own = self.own_plugin_id;
+        let candidates = panes
+            .iter()
+            .filter(|p| p.is_focused && !p.is_suppressed && !(p.is_plugin && Some(p.id) == own));
+        let pick = |floating: bool| {
+            candidates
+                .clone()
+                .find(|p| p.is_floating == floating && !p.is_plugin)
+        };
+        let pane = if tab.are_floating_panes_visible {
+            pick(true).or_else(|| pick(false))
+        } else {
+            pick(false)
+        }?;
+        Some((Some(tab.position), PaneId::Terminal(pane.id)))
+    }
+
+    fn pane_info_from_manifest(&self, pane_id: PaneId) -> Option<PaneInfo> {
+        let (id, is_plugin) = match pane_id {
+            PaneId::Terminal(id) => (id, false),
+            PaneId::Plugin(id) => (id, true),
+        };
+        self.manifest
+            .as_ref()?
+            .panes
+            .values()
+            .flatten()
+            .find(|p| p.id == id && p.is_plugin == is_plugin)
+            .cloned()
+    }
+
+    /// The area floating panes can occupy: the union of the tab's visible,
+    /// selectable tiled panes (this excludes the tab bar / status bar). Falls
+    /// back to the origin pane itself.
+    fn screen_bounds(&self, tab: Option<usize>, origin: Option<&PaneInfo>) -> Rect {
+        let tab = tab.or_else(|| self.active_tab().map(|t| t.position));
+        let tiled = tab
+            .and_then(|t| self.manifest.as_ref()?.panes.get(&t))
+            .into_iter()
+            .flatten()
+            .filter(|p| !p.is_floating && !p.is_suppressed && p.is_selectable)
+            .map(pane_rect)
+            .reduce(|a, b| a.union(&b));
+        tiled.or_else(|| origin.map(pane_rect)).unwrap_or_default()
+    }
+}
+
+fn pane_rect(p: &PaneInfo) -> Rect {
+    Rect::new(p.pane_x, p.pane_y, p.pane_columns, p.pane_rows)
+}
+
+/// The viewport row holding the cursor and the cursor's column within it.
+/// Prefers the scrollback's content-relative cursor; falls back to
+/// `PaneInfo::cursor_coordinates_in_pane` (frame-relative) shifted into the
+/// content area.
+fn cursor_line<'a>(
+    info: Option<&PaneInfo>,
+    contents: &'a PaneContents,
+) -> Option<(&'a str, usize)> {
+    let (x, y) = contents.cursor.or_else(|| {
+        let i = info?;
+        let (x, y) = i.cursor_coordinates_in_pane?;
+        let dx = i.pane_content_x.saturating_sub(i.pane_x);
+        let dy = i.pane_content_y.saturating_sub(i.pane_y);
+        Some((x.checked_sub(dx)?, y.checked_sub(dy)?))
+    })?;
+    contents.viewport.get(y).map(|line| (line.as_str(), x))
+}
+
+/// Absolute cursor position. `PaneInfo::cursor_coordinates_in_pane` is
+/// relative to the pane's outer geometry (frame included); the scrollback's
+/// cursor is relative to the content area. Without either, use the last row
+/// of the pane's content.
+fn cursor_position(info: Option<&PaneInfo>, contents: &PaneContents) -> (usize, usize) {
+    match info {
+        Some(i) => {
+            if let Some((x, y)) = i.cursor_coordinates_in_pane {
+                (i.pane_x + x, i.pane_y + y)
+            } else if let Some((x, y)) = contents.cursor {
+                (i.pane_content_x + x, i.pane_content_y + y)
+            } else {
+                (
+                    i.pane_content_x,
+                    i.pane_content_y + i.pane_content_rows.saturating_sub(1),
+                )
+            }
+        }
+        None => contents.cursor.unwrap_or((0, 0)),
+    }
+}
+
+fn map_key(key: &KeyWithModifier) -> Key {
+    let mods = &key.key_modifiers;
+    let none = mods.is_empty();
+    let only = |m: KeyModifier| mods.len() == 1 && mods.contains(&m);
+    match key.bare_key {
+        BareKey::Tab if none => Key::Next,
+        BareKey::Tab if only(KeyModifier::Shift) => Key::Prev,
+        BareKey::Down if none => Key::Next,
+        BareKey::Up if none => Key::Prev,
+        BareKey::Enter if none => Key::Accept,
+        BareKey::Esc if none => Key::Cancel,
+        BareKey::Backspace if none => Key::Backspace,
+        BareKey::Char('n') if only(KeyModifier::Ctrl) => Key::Next,
+        BareKey::Char('p') if only(KeyModifier::Ctrl) => Key::Prev,
+        BareKey::Char('c') if only(KeyModifier::Ctrl) => Key::Cancel,
+        BareKey::Char(c) if none => Key::Char(c),
+        BareKey::Char(c) if only(KeyModifier::Shift) => {
+            Key::Char(c.to_uppercase().next().unwrap_or(c))
+        }
+        _ => Key::Other,
+    }
+}
