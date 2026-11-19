@@ -147,6 +147,12 @@ impl State {
 
     /// Records the origin pane, harvests its scrollback and shows the popup.
     fn trigger(&mut self) {
+        if self.session_name.is_none() {
+            // Keys are forwarded with `send_key_to_session_pane`, which needs
+            // it. Opening anyway would let the filter drift from the shell.
+            eprintln!("zellij-scrollback-completion: no ModeUpdate yet (session name unknown)");
+            return;
+        }
         let Some((tab, origin)) = self.focused_pane() else {
             eprintln!("zellij-scrollback-completion: could not determine the focused pane");
             return;
