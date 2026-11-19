@@ -25,7 +25,7 @@ struct State {
     permissions_granted: bool,
     /// A trigger arrived before permissions were granted.
     pending_trigger: bool,
-    own_plugin_id: Option<u32>,
+    own_plugin_id: u32,
     tabs: Vec<TabInfo>,
     manifest: Option<PaneManifest>,
     session: Option<Session>,
@@ -59,7 +59,7 @@ impl ZellijPlugin for State {
             eprintln!("zellij-scrollback-completion: {warning}");
         }
         self.config = config;
-        self.own_plugin_id = Some(get_plugin_ids().plugin_id);
+        self.own_plugin_id = get_plugin_ids().plugin_id;
         request_permission(&[
             PermissionType::ReadPaneContents,
             PermissionType::WriteToStdin,
@@ -135,8 +135,8 @@ impl ZellijPlugin for State {
 }
 
 impl State {
-    fn own_pane_id(&self) -> Option<PaneId> {
-        self.own_plugin_id.map(PaneId::Plugin)
+    fn own_pane_id(&self) -> PaneId {
+        PaneId::Plugin(self.own_plugin_id)
     }
 
     /// Records the origin pane, harvests its scrollback and shows the popup.
@@ -145,7 +145,7 @@ impl State {
             eprintln!("zellij-scrollback-completion: could not determine the focused pane");
             return;
         };
-        if Some(origin) == self.own_pane_id() {
+        if origin == self.own_pane_id() {
             // We are focused ourselves (e.g. the user just answered the
             // permission prompt); there is no origin pane to complete into.
             self.close();
@@ -235,9 +235,7 @@ impl State {
 
     /// Resizes/moves the popup to fit the current menu, if that changed.
     fn reposition(&mut self) {
-        let Some(own) = self.own_pane_id() else {
-            return;
-        };
+        let own = self.own_pane_id();
         let Some(session) = self.session.as_mut() else {
             return;
         };
@@ -280,14 +278,10 @@ impl State {
     fn focused_pane_from_manifest(&self) -> Option<(Option<usize>, PaneId)> {
         let tab = self.active_tab()?;
         let panes = self.manifest.as_ref()?.panes.get(&tab.position)?;
-        let own = self.own_plugin_id;
-        let candidates = panes
-            .iter()
-            .filter(|p| p.is_focused && !p.is_suppressed && !(p.is_plugin && Some(p.id) == own));
         let pick = |floating: bool| {
-            candidates
-                .clone()
-                .find(|p| p.is_floating == floating && !p.is_plugin)
+            panes.iter().find(|p| {
+                p.is_focused && !p.is_suppressed && !p.is_plugin && p.is_floating == floating
+            })
         };
         let pane = if tab.are_floating_panes_visible {
             pick(true).or_else(|| pick(false))
