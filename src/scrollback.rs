@@ -15,10 +15,11 @@ pub fn ordered_rows<'a>(
         .map(String::as_str)
 }
 
-/// Display width of a row ignoring trailing whitespace. Zellij pads some rows
-/// with blanks, so trailing whitespace must not count towards "full".
-fn visible_width(row: &str) -> usize {
-    row.trim_end().width()
+/// True if `row` soft-wraps onto the next row: its display width, ignoring
+/// trailing whitespace (Zellij pads some rows with blanks), reaches the
+/// pane's content width. Always false when the width is unknown (`0`).
+pub fn wraps(row: &str, content_columns: usize) -> bool {
+    content_columns > 0 && row.trim_end().width() >= content_columns
 }
 
 /// Re-joins soft-wrapped rows into logical lines.
@@ -31,7 +32,6 @@ pub fn logical_lines<'a, I>(rows: I, content_columns: usize, rejoin: bool) -> Ve
 where
     I: IntoIterator<Item = &'a str>,
 {
-    let rejoin = rejoin && content_columns > 0;
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut continuing = false;
@@ -41,7 +41,7 @@ where
         } else {
             current = row.to_string();
         }
-        continuing = rejoin && visible_width(row) >= content_columns;
+        continuing = rejoin && wraps(row, content_columns);
         if !continuing {
             lines.push(std::mem::take(&mut current));
         }

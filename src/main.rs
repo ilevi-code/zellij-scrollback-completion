@@ -8,7 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use unicode_width::UnicodeWidthStr;
 use zellij_scrollback_completion::{
     candidates, completion,
     config::Config,
@@ -172,17 +171,26 @@ impl State {
         );
         let words = candidates::from_rows(rows, content_columns, &self.config);
 
-        let prefix = cursor_line(info.as_ref(), &contents)
-            .map(|(line, col)| completion::word_before_cursor(line, col, &self.config))
+        let cursor = placement::content_cursor(
+            contents.cursor,
+            info.as_ref().and_then(|i| i.cursor_coordinates_in_pane),
+            info.as_ref().map_or((0, 0), |i| {
+                (
+                    i.pane_content_x.saturating_sub(i.pane_x),
+                    i.pane_content_y.saturating_sub(i.pane_y),
+                )
+            }),
+        );
+        let word = cursor
+            .map(|c| completion::cursor_word(&contents.viewport, c, content_columns, &self.config))
             .unwrap_or_default();
-        let cursor = cursor_position(info.as_ref(), &contents);
-        let anchor = (cursor.0.saturating_sub(prefix.width()), cursor.1);
+        let anchor = menu_anchor(info.as_ref(), cursor, word.start_col);
         let bounds = self.screen_bounds(tab, info.as_ref());
         self.session = Some(Session {
             origin,
             anchor,
             bounds,
-            menu: Menu::with_prefix(words, self.config.height, &prefix),
+            menu: Menu::with_prefix(words, self.config.height, &word.text),
             rect: None,
         });
         show_self(true);
@@ -341,43 +349,19 @@ fn pane_rect(p: &PaneInfo) -> Rect {
     Rect::new(p.pane_x, p.pane_y, p.pane_columns, p.pane_rows)
 }
 
-/// The viewport row holding the cursor and the cursor's column within it.
-/// Prefers the scrollback's content-relative cursor; falls back to
-/// `PaneInfo::cursor_coordinates_in_pane` (frame-relative) shifted into the
-/// content area.
-fn cursor_line<'a>(
+/// Absolute screen position the menu hangs from: the start of the word on
+/// the cursor row. Without a known cursor, the start of the last content row.
+fn menu_anchor(
     info: Option<&PaneInfo>,
-    contents: &'a PaneContents,
-) -> Option<(&'a str, usize)> {
-    let (x, y) = contents.cursor.or_else(|| {
-        let i = info?;
-        let (x, y) = i.cursor_coordinates_in_pane?;
-        let dx = i.pane_content_x.saturating_sub(i.pane_x);
-        let dy = i.pane_content_y.saturating_sub(i.pane_y);
-        Some((x.checked_sub(dx)?, y.checked_sub(dy)?))
-    })?;
-    contents.viewport.get(y).map(|line| (line.as_str(), x))
-}
-
-/// Absolute cursor position. `PaneInfo::cursor_coordinates_in_pane` is
-/// relative to the pane's outer geometry (frame included); the scrollback's
-/// cursor is relative to the content area. Without either, use the last row
-/// of the pane's content.
-fn cursor_position(info: Option<&PaneInfo>, contents: &PaneContents) -> (usize, usize) {
-    match info {
-        Some(i) => {
-            if let Some((x, y)) = i.cursor_coordinates_in_pane {
-                (i.pane_x + x, i.pane_y + y)
-            } else if let Some((x, y)) = contents.cursor {
-                (i.pane_content_x + x, i.pane_content_y + y)
-            } else {
-                (
-                    i.pane_content_x,
-                    i.pane_content_y + i.pane_content_rows.saturating_sub(1),
-                )
-            }
-        }
-        None => contents.cursor.unwrap_or((0, 0)),
+    content_cursor: Option<(usize, usize)>,
+    word_start_col: usize,
+) -> (usize, usize) {
+    let (x, y, rows) = info.map_or((0, 0, 1), |i| {
+        (i.pane_content_x, i.pane_content_y, i.pane_content_rows)
+    });
+    match content_cursor {
+        Some((_, row)) => (x + word_start_col, y + row),
+        None => (x, y + rows.saturating_sub(1)),
     }
 }
 

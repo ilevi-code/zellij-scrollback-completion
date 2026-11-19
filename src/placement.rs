@@ -83,6 +83,23 @@ pub fn place(cursor: (usize, usize), bounds: Rect, want_width: usize, want_heigh
     Rect::new(x, y, want_width, height)
 }
 
+/// The cursor position relative to a pane's content area. Zellij reports it
+/// two ways: `content_cursor` (from the pane's scrollback, already
+/// content-relative) and `frame_cursor` (relative to the pane's outer
+/// geometry, frame included). `frame_inset` is the content origin's offset
+/// from the outer origin. Prefers `content_cursor`; `None` if neither is
+/// known or the frame cursor lies on the frame itself.
+pub fn content_cursor(
+    content_cursor: Option<(usize, usize)>,
+    frame_cursor: Option<(usize, usize)>,
+    frame_inset: (usize, usize),
+) -> Option<(usize, usize)> {
+    content_cursor.or_else(|| {
+        let (x, y) = frame_cursor?;
+        Some((x.checked_sub(frame_inset.0)?, y.checked_sub(frame_inset.1)?))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +184,25 @@ mod tests {
         let a = Rect::new(0, 1, 40, 10);
         let b = Rect::new(40, 1, 40, 23);
         assert_eq!(a.union(&b), Rect::new(0, 1, 80, 23));
+    }
+
+    #[test]
+    fn content_cursor_prefers_scrollback_cursor() {
+        assert_eq!(
+            content_cursor(Some((3, 4)), Some((9, 9)), (1, 1)),
+            Some((3, 4))
+        );
+    }
+
+    #[test]
+    fn content_cursor_converts_frame_cursor() {
+        assert_eq!(content_cursor(None, Some((5, 2)), (1, 1)), Some((4, 1)));
+        assert_eq!(content_cursor(None, Some((5, 2)), (0, 0)), Some((5, 2)));
+    }
+
+    #[test]
+    fn content_cursor_on_frame_or_unknown_is_none() {
+        assert_eq!(content_cursor(None, Some((0, 3)), (1, 1)), None);
+        assert_eq!(content_cursor(None, None, (1, 1)), None);
     }
 }
