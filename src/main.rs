@@ -208,8 +208,38 @@ impl State {
             },
             rect: None,
         });
+        if let Some(tab) = tab {
+            self.move_self_to_tab(tab);
+        }
         show_self(true);
         self.reposition();
+    }
+
+    /// Moves our (hidden) pane into tab `tab` so `show_self` opens the popup
+    /// there.
+    ///
+    /// `MessagePlugin` reuses one plugin instance, whose pane stays in the tab
+    /// it was first launched in, and `show_self` switches to that tab. Moving
+    /// a suppressed pane makes it tiled in the target tab, so it is first
+    /// unsuppressed as a floating pane (without focusing or switching tabs),
+    /// then moved, keeping it floating.
+    fn move_self_to_tab(&self, tab: usize) {
+        if self.own_tab() == Some(tab) {
+            return;
+        }
+        let own = self.own_pane_id();
+        show_pane_with_id(own, true, false);
+        break_panes_to_tab_with_index(&[own], tab, false);
+    }
+
+    /// The position of the tab holding our pane, per the last PaneUpdate.
+    fn own_tab(&self) -> Option<usize> {
+        self.manifest.as_ref()?.panes.iter().find_map(|(tab, panes)| {
+            panes
+                .iter()
+                .any(|p| p.is_plugin && p.id == self.own_plugin_id)
+                .then_some(*tab)
+        })
     }
 
     /// The menu keeps focus (focusing a tiled pane would hide the floating
