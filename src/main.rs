@@ -26,6 +26,8 @@ struct State {
     /// A trigger arrived before permissions were granted.
     pending_trigger: bool,
     own_plugin_id: u32,
+    /// From `ModeUpdate`; needed to forward keys with `send_key_to_session_pane`.
+    session_name: Option<String>,
     tabs: Vec<TabInfo>,
     manifest: Option<PaneManifest>,
     session: Option<Session>,
@@ -71,6 +73,7 @@ impl ZellijPlugin for State {
             EventType::PermissionRequestResult,
             EventType::PaneUpdate,
             EventType::TabUpdate,
+            EventType::ModeUpdate,
         ]);
     }
 
@@ -105,6 +108,10 @@ impl ZellijPlugin for State {
                 hide_self();
                 false
             }
+            Event::ModeUpdate(mode) => {
+                self.session_name = mode.session_name;
+                false
+            }
             Event::TabUpdate(tabs) => {
                 self.tabs = tabs;
                 false
@@ -113,7 +120,7 @@ impl ZellijPlugin for State {
                 self.manifest = Some(manifest);
                 false
             }
-            Event::Key(key) => self.handle_key(map_key(&key)),
+            Event::Key(key) => self.handle_key(key),
             _ => false,
         }
     }
@@ -185,16 +192,25 @@ impl State {
     /// The menu keeps focus (focusing a tiled pane would hide the floating
     /// layer), so keys the menu doesn't consume are forwarded to the origin
     /// pane: typing continues in the shell while the menu follows along.
-    fn handle_key(&mut self, key: KeyPress) -> bool {
+    ///
+    /// Forwarding goes through `send_key_to_session_pane` rather than raw
+    /// bytes so Zellij encodes the key for the pane's input mode (application
+    /// cursor keys, kitty keyboard protocol).
+    fn handle_key(&mut self, key: KeyWithModifier) -> bool {
         let Some(session) = self.session.as_mut() else {
             return false;
         };
         let config = &self.config;
-        let outcome = session.menu.handle_key(&key, |c| config.is_separator(c));
+        let outcome = session
+            .menu
+            .handle_key(&map_key(&key), |c| config.is_separator(c));
         let origin = session.origin;
-        let forward = || match key.encode() {
-            Some(bytes) => write_to_pane_id(bytes, origin),
-            None => eprintln!("zellij-scrollback-completion: cannot forward {key:?}"),
+        let session_name = self.session_name.as_deref();
+        let forward = || match session_name {
+            Some(name) => send_key_to_session_pane(name, origin, key.clone()),
+            None => {
+                eprintln!("zellij-scrollback-completion: session name unknown, dropping {key:?}")
+            }
         };
         match outcome {
             Outcome::Redraw => {
@@ -375,16 +391,7 @@ fn map_key(key: &KeyWithModifier) -> KeyPress {
         BareKey::Esc => Bare::Esc,
         BareKey::Up => Bare::Up,
         BareKey::Down => Bare::Down,
-        BareKey::Left => Bare::Left,
-        BareKey::Right => Bare::Right,
-        BareKey::Home => Bare::Home,
-        BareKey::End => Bare::End,
-        BareKey::Delete => Bare::Delete,
-        BareKey::Insert => Bare::Insert,
-        BareKey::PageUp => Bare::PageUp,
-        BareKey::PageDown => Bare::PageDown,
-        BareKey::F(n) => Bare::F(n),
-        _ => Bare::Unknown,
+        _ => Bare::Other,
     };
     KeyPress {
         bare,

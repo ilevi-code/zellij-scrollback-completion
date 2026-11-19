@@ -327,11 +327,13 @@ mod tests {
     #[test]
     fn other_keys_close_and_forward() {
         for k in [
-            key(Bare::Left),
-            key(Bare::Home),
+            key(Bare::Other),
             KeyPress::ctrl('c'),
             KeyPress::ctrl('a'),
-            key(Bare::Unknown),
+            KeyPress {
+                alt: true,
+                ..ch('b')
+            },
         ] {
             let mut m = menu(&["abc"], 10);
             assert_eq!(press(&mut m, k), Outcome::CloseAndForward, "{k:?}");
