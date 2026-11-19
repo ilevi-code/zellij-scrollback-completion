@@ -384,6 +384,8 @@ fn cursor_position(info: Option<&PaneInfo>, contents: &PaneContents) -> (usize, 
 fn map_key(key: &KeyWithModifier) -> KeyPress {
     let mods = &key.key_modifiers;
     let bare = match key.bare_key {
+        // Super chords aren't text; Zellij may forward them as CSI-u.
+        BareKey::Char(_) if mods.contains(&KeyModifier::Super) => Bare::Other,
         BareKey::Char(c) => Bare::Char(c),
         BareKey::Enter => Bare::Enter,
         BareKey::Tab => Bare::Tab,
