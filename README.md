@@ -29,13 +29,14 @@ Requires Zellij **0.46** or later. See [ROADMAP.md](ROADMAP.md) for the design.
 
 3. Add a keybind. Put the `bind` block inside the existing
    `shared_except "locked" { ... }` block of `keybinds` in your `config.kdl`,
-   and adjust the path to where you built the plugin:
+   replacing `/path/to/zellij-scrollback-completion` with the absolute path of
+   this repository:
 
    ```kdl
    keybinds {
        shared_except "locked" {
            bind "Alt ;" {
-               MessagePlugin "file:/Users/itayl/projects/zellij-scrollback-completion/target/wasm32-wasip1/release/zellij-scrollback-completion.wasm" {
+               MessagePlugin "file:/path/to/zellij-scrollback-completion/target/wasm32-wasip1/release/zellij-scrollback-completion.wasm" {
                    floating true
                    // Optional settings; the values shown are the defaults.
                    // separators "()[]{}<>\"',;"

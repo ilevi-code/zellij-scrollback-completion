@@ -6,7 +6,7 @@ use zellij_utils::data::{InputMode, KeyWithModifier};
 use zellij_utils::input::actions::Action;
 use zellij_utils::input::config::Config;
 
-const WASM_URL: &str = "file:/Users/itayl/projects/zellij-scrollback-completion/target/wasm32-wasip1/release/zellij-scrollback-completion.wasm";
+const WASM_URL: &str = "file:/path/to/zellij-scrollback-completion/target/wasm32-wasip1/release/zellij-scrollback-completion.wasm";
 
 fn readme_kdl_snippet() -> String {
     let readme = include_str!("../README.md");
