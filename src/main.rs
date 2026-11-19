@@ -164,10 +164,15 @@ impl State {
             return;
         }
         let info = get_pane_info(origin).or_else(|| self.pane_info_from_manifest(origin));
-        let contents = get_pane_scrollback(origin, true).unwrap_or_else(|e| {
-            eprintln!("zellij-scrollback-completion: failed to read scrollback: {e}");
-            PaneContents::default()
-        });
+        let contents = match get_pane_scrollback(origin, true) {
+            Ok(contents) => Some(contents),
+            Err(e) => {
+                eprintln!("zellij-scrollback-completion: failed to read scrollback: {e}");
+                None
+            }
+        };
+        let read_failed = contents.is_none();
+        let contents = contents.unwrap_or_default();
 
         let content_columns = info.as_ref().map_or(0, |i| i.pane_content_columns);
         let rows = scrollback::ordered_rows(
@@ -196,7 +201,11 @@ impl State {
             origin,
             anchor,
             bounds,
-            menu: Menu::with_prefix(words, self.config.height, &word.text),
+            menu: if read_failed {
+                Menu::read_failed(self.config.height)
+            } else {
+                Menu::with_prefix(words, self.config.height, &word.text)
+            },
             rect: None,
         });
         show_self(true);

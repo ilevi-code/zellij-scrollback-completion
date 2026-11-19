@@ -91,7 +91,9 @@ the pane's scrollback.
 
 If nothing matches, the menu shows a dim `no matches` row and stays open so
 you can keep typing or backspace. If the scrollback has no candidates at all,
-it shows `no matches` and the next key closes it.
+it shows `no matches` and the next key closes it. If Zellij can't hand over
+the scrollback, it shows a red `cannot read scrollback` row instead (the
+reason is in the Zellij log), and the next key closes it.
 
 **Limitation:** the menu holds Zellij's focus while it's open (giving focus
 back to the shell pane would hide the floating menu), so the shell's cursor

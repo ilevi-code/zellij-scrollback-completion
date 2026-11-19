@@ -36,6 +36,7 @@ pub struct Menu {
     scroll: usize,
     max_list_rows: usize,
     ranker: Ranker,
+    read_failed: bool,
 }
 
 impl Menu {
@@ -60,9 +61,24 @@ impl Menu {
             scroll: 0,
             max_list_rows: height.max(1),
             ranker: Ranker::default(),
+            read_failed: false,
         };
         menu.refilter();
         menu
+    }
+
+    /// An empty menu reporting that the scrollback couldn't be read. Like an
+    /// empty scrollback, the next key closes it.
+    pub fn read_failed(height: usize) -> Menu {
+        Menu {
+            read_failed: true,
+            ..Menu::with_prefix(Vec::new(), height, "")
+        }
+    }
+
+    /// True if the scrollback couldn't be read.
+    pub fn is_read_failure(&self) -> bool {
+        self.read_failed
     }
 
     pub fn filter(&self) -> &str {
@@ -407,5 +423,14 @@ mod tests {
         let words: Vec<String> = (0..50).map(|i| format!("word{i}")).collect();
         let m = Menu::new(words, 10);
         assert_eq!(m.list_rows(), 10);
+    }
+
+    #[test]
+    fn read_failure_is_empty_and_next_key_closes() {
+        let mut m = Menu::read_failed(10);
+        assert!(m.is_read_failure());
+        assert!(m.has_no_candidates());
+        assert_eq!(press(&mut m, ch('a')), Outcome::CloseAndForward);
+        assert!(!menu(&[], 10).is_read_failure());
     }
 }

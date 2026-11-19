@@ -4,18 +4,20 @@ use crate::menu::{Menu, VisibleRow};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub const NO_MATCHES: &str = "no matches";
+pub const READ_FAILED: &str = "cannot read scrollback";
 /// Never narrower than this, so the popup stays usable.
 pub const MIN_WIDTH: usize = 12;
 
 const RESET: &str = "\u{1b}[0m";
 const REVERSE: &str = "\u{1b}[7m";
 const DIM: &str = "\u{1b}[2m";
+const ERROR: &str = "\u{1b}[31m";
 const MATCH_ON: &str = "\u{1b}[1;33m";
 const MATCH_OFF: &str = "\u{1b}[22;39m";
 
 /// Desired popup size `(width, height)` before clamping to the screen: as
 /// wide as the widest visible candidate, one row per visible candidate (or
-/// one `no matches` row). There is no filter row: the word being completed
+/// one `no matches` / error row). There is no filter row: the word being completed
 /// is visible on the shell prompt itself.
 pub fn desired_size(menu: &Menu) -> (usize, usize) {
     let rows = menu.list_rows();
@@ -25,7 +27,7 @@ pub fn desired_size(menu: &Menu) -> (usize, usize) {
         .map(|r| r.text.width())
         .max()
         .unwrap_or(0);
-    let width = widest.max(NO_MATCHES.width()).max(MIN_WIDTH);
+    let width = widest.max(empty_message(menu).1.width()).max(MIN_WIDTH);
     (width, rows)
 }
 
@@ -38,9 +40,10 @@ pub fn render_lines(menu: &Menu, rows: usize, cols: usize) -> Vec<String> {
     let mut lines = Vec::with_capacity(rows);
     let visible = menu.visible_rows(rows);
     if visible.is_empty() {
+        let (style, text) = empty_message(menu);
         lines.push(format!(
-            "{DIM}{}{RESET}",
-            pad(&truncate(NO_MATCHES, cols), cols)
+            "{style}{}{RESET}",
+            pad(&truncate(text, cols), cols)
         ));
     }
     for row in &visible {
@@ -50,6 +53,15 @@ pub fn render_lines(menu: &Menu, rows: usize, cols: usize) -> Vec<String> {
         lines.push(" ".repeat(cols));
     }
     lines
+}
+
+/// Style and text of the single row shown when nothing is listed.
+fn empty_message(menu: &Menu) -> (&'static str, &'static str) {
+    if menu.is_read_failure() {
+        (ERROR, READ_FAILED)
+    } else {
+        (DIM, NO_MATCHES)
+    }
 }
 
 fn candidate_line(row: &VisibleRow<'_>, cols: usize) -> String {
@@ -234,5 +246,14 @@ mod tests {
     #[test]
     fn strip_ansi_works() {
         assert_eq!(strip_ansi("\u{1b}[1;33mab\u{1b}[0mc"), "abc");
+    }
+
+    #[test]
+    fn read_failure_shows_error_row() {
+        let m = Menu::read_failed(10);
+        assert_eq!(desired_size(&m), (READ_FAILED.width(), 1));
+        let lines = render_lines(&m, 1, 30);
+        assert!(lines[0].starts_with(ERROR));
+        assert_eq!(strip_ansi(&lines[0]).trim_end(), READ_FAILED);
     }
 }
