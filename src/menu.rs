@@ -39,15 +39,15 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// `candidates` must be in recency order; `height` is the maximum number
-    /// of list rows.
-    pub fn new(candidates: Vec<String>, height: usize) -> Menu {
+    #[cfg(test)]
+    pub(crate) fn new(candidates: Vec<String>, height: usize) -> Menu {
         Menu::with_prefix(candidates, height, "")
     }
 
-    /// Like [`Menu::new`], but the filter starts as `prefix` (the partial word
-    /// before the cursor). A candidate equal to `prefix` is dropped: it is
-    /// usually the partial word itself, harvested from the prompt line.
+    /// A menu over `candidates` (most recent first) showing at most `height`
+    /// rows, with the filter starting as `prefix` (the partial word before the
+    /// cursor). A candidate equal to `prefix` is dropped: it is usually the
+    /// partial word itself, harvested from the prompt line.
     pub fn with_prefix(mut candidates: Vec<String>, height: usize, prefix: &str) -> Menu {
         if !prefix.is_empty() {
             candidates.retain(|c| c != prefix);
@@ -74,7 +74,8 @@ impl Menu {
         self.candidates.is_empty()
     }
 
-    pub fn has_matches(&self) -> bool {
+    #[cfg(test)]
+    fn has_matches(&self) -> bool {
         !self.matches.is_empty()
     }
 

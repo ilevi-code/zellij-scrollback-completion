@@ -107,8 +107,9 @@ fn pad(s: &str, cols: usize) -> String {
     format!("{s}{}", " ".repeat(cols.saturating_sub(w)))
 }
 
-/// Removes ANSI CSI sequences (used by tests, handy for debugging).
-pub fn strip_ansi(s: &str) -> String {
+/// Removes ANSI CSI sequences.
+#[cfg(test)]
+fn strip_ansi(s: &str) -> String {
     let mut out = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
