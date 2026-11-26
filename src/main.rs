@@ -234,12 +234,16 @@ impl State {
 
     /// The position of the tab holding our pane, per the last PaneUpdate.
     fn own_tab(&self) -> Option<usize> {
-        self.manifest.as_ref()?.panes.iter().find_map(|(tab, panes)| {
-            panes
-                .iter()
-                .any(|p| p.is_plugin && p.id == self.own_plugin_id)
-                .then_some(*tab)
-        })
+        self.manifest
+            .as_ref()?
+            .panes
+            .iter()
+            .find_map(|(tab, panes)| {
+                panes
+                    .iter()
+                    .any(|p| p.is_plugin && p.id == self.own_plugin_id)
+                    .then_some(*tab)
+            })
     }
 
     /// The menu keeps focus (focusing a tiled pane would hide the floating
