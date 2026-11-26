@@ -12,31 +12,25 @@ Requires Zellij **0.46** or later. See [ROADMAP.md](ROADMAP.md) for the design.
 
 ## Install
 
-1. Add the wasm target (once):
+1. Download the plugin from the
+   [latest release](https://github.com/ilevi-code/zellij-scrollback-completion/releases/latest):
 
    ```sh
-   rustup target add wasm32-wasip1
+   mkdir -p ~/.config/zellij/plugins
+   curl -fL -o ~/.config/zellij/plugins/zellij-scrollback-completion.wasm \
+     https://github.com/ilevi-code/zellij-scrollback-completion/releases/latest/download/zellij-scrollback-completion.wasm
    ```
 
-2. Build the plugin:
+   To build it yourself instead, see [Building from source](#building-from-source).
 
-   ```sh
-   make build
-   # same as: cargo build --release --target wasm32-wasip1
-   ```
-
-   Output: `target/wasm32-wasip1/release/zellij-scrollback-completion.wasm`
-
-3. Add a keybind. Put the `bind` block inside the existing
-   `shared_except "locked" { ... }` block of `keybinds` in your `config.kdl`,
-   replacing `/path/to/zellij-scrollback-completion` with the absolute path of
-   this repository:
+2. Add a keybind. Put the `bind` block inside the existing
+   `shared_except "locked" { ... }` block of `keybinds` in your `config.kdl`:
 
    ```kdl
    keybinds {
        shared_except "locked" {
            bind "Alt ;" {
-               MessagePlugin "file:/path/to/zellij-scrollback-completion/target/wasm32-wasip1/release/zellij-scrollback-completion.wasm" {
+               MessagePlugin "file:~/.config/zellij/plugins/zellij-scrollback-completion.wasm" {
                    floating true
                    // Optional settings; the values shown are the defaults.
                    // separators "()[]{}<>\"',;"
@@ -51,15 +45,24 @@ Requires Zellij **0.46** or later. See [ROADMAP.md](ROADMAP.md) for the design.
    }
    ```
 
-4. Restart Zellij, or start a new session, so it picks up the keybind.
+3. Restart Zellij, or start a new session, so it picks up the keybind.
 
-5. On the first press of `Alt ;`, Zellij opens the plugin and asks for
+4. On the first press of `Alt ;`, Zellij opens the plugin and asks for
    permissions. Focus the plugin pane (for example by clicking it) and press
    `y`. The plugin then hides itself; press `Alt ;` again to use it. Zellij
    remembers the grant, so it asks only once.
 
-After rebuilding the wasm, restart the Zellij session: Zellij keeps the
-already-loaded plugin until then.
+To update, download the new `.wasm` over the old one and restart the Zellij
+session: Zellij keeps the already-loaded plugin until then.
+
+### Building from source
+
+```sh
+rustup target add wasm32-wasip1   # once
+make build
+# same as: cargo build --release --target wasm32-wasip1
+cp target/wasm32-wasip1/release/zellij-scrollback-completion.wasm ~/.config/zellij/plugins/
+```
 
 ## Usage
 
@@ -196,3 +199,11 @@ Layout:
 
 `tests/readme_keybind.rs` parses the first `kdl` block of this README with
 Zellij's own config parser, so keep the keybind snippet first.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+The released `.wasm` bundles
+[`nucleo-matcher`](https://github.com/helix-editor/nucleo), which is
+licensed under MPL-2.0; its source is available at that link.
