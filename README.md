@@ -196,3 +196,11 @@ Layout:
 
 `tests/readme_keybind.rs` parses the first `kdl` block of this README with
 Zellij's own config parser, so keep the keybind snippet first.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
+
+The released `.wasm` bundles
+[`nucleo-matcher`](https://github.com/helix-editor/nucleo), which is
+licensed under MPL-2.0; its source is available at that link.
